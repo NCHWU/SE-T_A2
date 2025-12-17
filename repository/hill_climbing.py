@@ -92,9 +92,22 @@ def mutate_seed(
     """
 
     # TODO (student)
+    range_limit = 255 * epsilon
+    N_neighbors = 10 
     mutated_neighbors = []
-    mutated_neighbors.append(seed)
+    for i in range(N_neighbors):
+        neighbor = seed.copy()
+        # Randomly select 1 pixel
+        x = np.random.randint(0, seed.shape[0])
+        y = np.random.randint(0, seed.shape[1])
+        c = np.random.randint(0, seed.shape[2])
+        # Randomly perturb the pixel within the allowed range
+        perturbation = np.random.uniform(-range_limit, range_limit)
+        neighbor[x, y, c] = np.clip(neighbor[x, y, c] + perturbation, 0, 255)
+        mutated_neighbors.append(neighbor)
     return mutated_neighbors
+
+
 
 # ============================================================
 # 3. SELECT BEST CANDIDATE
@@ -160,27 +173,45 @@ def hill_climb(
 
     # TODO (team work)
     BROKEN_CONFIDENTLY_THRESHOLD = 0.75
-    EARLY_STOPPING_CRITERIA = 1000 # For no improvements for multiple steps
-    candidates = [] # List of candidates from each iteration, index -1 is the best model
-    current = initial_seed
+    EARLY_STOPPING_CRITERIA = 1000 # Criteria for when no change after n steps
+    candidates = [] # List of candidates from each iteration, index -1 is the best model. NOT NECESSARY
     iterations_without_improvement = 0
+    range_limit = 255.0 * epsilon
+    lower = np.clip(initial_seed - range_limit, 0, 255)
+    upper = np.clip(initial_seed + range_limit, 0, 255)
+    current = initial_seed.copy()
+    current_fitness = compute_fitness(current, model, target_label)
+    candidates = [(current, current_fitness)]
     for i in range(iterations):
-        # stop iterating after no changes
+        # Generate ANY number of neighbors using mutate_seed()
         neighbors = mutate_seed(current, epsilon)
-        # TODO: enforce the same L\infty bound to initial_seed??
+        # Enforce the SAME L∞ bound relative to initial_seed
+        neighbors = [np.clip(n, lower, upper) for n in neighbors]
+        # Add current image to candidates (elitism)
+        neighbors.append(current)
+
         best_iteration_neighbor, best_iteration_fitness = select_best(neighbors, model, target_label)
-        if len(candidates) == 0 or best_iteration_fitness < candidates[-1][1]: # [-1][1] selects the latest seed and gets it's fitness score
+
+        if best_iteration_fitness < candidates[-1][1]: 
+            # [-1][1] selects the latest seed and gets it's fitness score
             candidates.append((best_iteration_neighbor, best_iteration_fitness))
             iterations_without_improvement = 0
+
+            # Accept new candidate only if fitness improves
+            current = candidates[-1][0]
             print(f"Iteration {i} Improvement: {candidates[-1][1]}")
-        elif best_iteration_fitness == candidates[-1][1]: # For early-stopping, stays the same
+        elif best_iteration_fitness == candidates[-1][1]:
+            # Incremeent early-stopping count
             iterations_without_improvement += 1
-        current = candidates[-1][0]
-        if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or candidates[-1][1] < -BROKEN_CONFIDENTLY_THRESHOLD):
+
+        # Stop if target class is broken confidently, OR no improvement for multiple steps (optional)
+        if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or
+            candidates[-1][1] < -BROKEN_CONFIDENTLY_THRESHOLD):
             break
         #print(f"Iteration {i}: best_fitness: {candidates[-1][1]}")
-            
-    return candidates[-1] # returns the "best model" (final_image, final_fitness)
+        
+    # Returns the "best model" (final_image, final_fitness)
+    return candidates[-1] 
 
 
 
