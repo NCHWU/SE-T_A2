@@ -39,16 +39,17 @@ def compute_fitness(
     """
 
     # TODO (student)
-    preds = model.predict(np.expand_dims(image_array, axis=0))
+    preds = model.predict(np.expand_dims(image_array, axis=0), verbose=0)
     predictions = []
     for cl in decode_predictions(preds, top=2)[0]:
         label, prob = cl[1], cl[2]
         predictions.append((label, prob))
     assert len(predictions) == 2
-    if predictions[0][0] == target_label:
-        fitness = predictions[0][1] - predictions[1][1]
+    if predictions[0][0] == target_label and predictions[0][1] > 0.5:
+        #fitness = predictions[0][1] - predictions[1][1] # in-class
+        fitness = predictions[0][1]
     else:
-        fitness = -predictions[0][0]
+        fitness = -predictions[0][1]
     return fitness
 
 # ============================================================
@@ -91,9 +92,9 @@ def mutate_seed(
     """
 
     # TODO (student)
-    raise NotImplementedError("mutate_seed must be implemented by the student.")
-
-
+    mutated_neighbors = []
+    mutated_neighbors.append(seed)
+    return mutated_neighbors
 
 # ============================================================
 # 3. SELECT BEST CANDIDATE
@@ -158,10 +159,29 @@ def hill_climb(
     """
 
     # TODO (team work)
-    fitness_score = compute_fitness(initial_seed, model, target_label)
-    print("fitness score", fitness_score)
-    pass
-    raise NotImplementedError("hill_climb must be implemented by the team.")
+    BROKEN_CONFIDENTLY_THRESHOLD = 0.75
+    EARLY_STOPPING_CRITERIA = 1000 # For no improvements for multiple steps
+    candidates = [] # List of candidates from each iteration, index -1 is the best model
+    current = initial_seed
+    iterations_without_improvement = 0
+    for i in range(iterations):
+        # stop iterating after no changes
+        neighbors = mutate_seed(current, epsilon)
+        # TODO: enforce the same L\infty bound to initial_seed??
+        best_iteration_neighbor, best_iteration_fitness = select_best(neighbors, model, target_label)
+        if len(candidates) == 0 or best_iteration_fitness < candidates[-1][1]: # [-1][1] selects the latest seed and gets it's fitness score
+            candidates.append((best_iteration_neighbor, best_iteration_fitness))
+            iterations_without_improvement = 0
+            print(f"Iteration {i} Improvement: {candidates[-1][1]}")
+        elif best_iteration_fitness == candidates[-1][1]: # For early-stopping, stays the same
+            iterations_without_improvement += 1
+        current = candidates[-1][0]
+        if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or candidates[-1][1] < -BROKEN_CONFIDENTLY_THRESHOLD):
+            break
+        #print(f"Iteration {i}: best_fitness: {candidates[-1][1]}")
+            
+    return candidates[-1] # returns the "best model" (final_image, final_fitness)
+
 
 
 # ============================================================
