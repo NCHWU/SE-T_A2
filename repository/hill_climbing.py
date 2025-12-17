@@ -39,8 +39,17 @@ def compute_fitness(
     """
 
     # TODO (student)
-    raise NotImplementedError("compute_fitness must be implemented by the student.")
-
+    preds = model.predict(np.expand_dims(image_array, axis=0))
+    predictions = []
+    for cl in decode_predictions(preds, top=2)[0]:
+        label, prob = cl[1], cl[2]
+        predictions.append((label, prob))
+    assert len(predictions) == 2
+    if predictions[0][0] == target_label:
+        fitness = predictions[0][1] - predictions[1][1]
+    else:
+        fitness = -predictions[0][0]
+    return fitness
 
 # ============================================================
 # 2. MUTATION FUNCTION
@@ -108,8 +117,14 @@ def select_best(
         (best_image, best_fitness)
     """
 
-    # TODO (student)
-    raise NotImplementedError("select_best must be implemented by the student.")
+    best_fitness = float('inf')
+    best_image = None
+    for image in candidates:
+        fitness_score = compute_fitness(image, model, target_label)
+        if fitness_score < best_fitness:
+            best_fitness = fitness_score
+            best_image = image
+    return (best_image, best_fitness)
 
 
 # ============================================================
@@ -143,6 +158,9 @@ def hill_climb(
     """
 
     # TODO (team work)
+    fitness_score = compute_fitness(initial_seed, model, target_label)
+    print("fitness score", fitness_score)
+    pass
     raise NotImplementedError("hill_climb must be implemented by the team.")
 
 
@@ -167,9 +185,9 @@ if __name__ == "__main__":
     print(f"Target label: {target_label}")
 
     img = load_img(image_path)
-    plt.imshow(img)
-    plt.title("Original image")
-    plt.show()
+    # plt.imshow(img)
+    # plt.title("Original image")
+    # plt.show()
 
     img_array = img_to_array(img)
     seed = img_array.copy()
