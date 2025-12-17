@@ -174,44 +174,43 @@ def hill_climb(
     # TODO (team work)
     BROKEN_CONFIDENTLY_THRESHOLD = 0.75
     EARLY_STOPPING_CRITERIA = 1000 # Criteria for when no change after n steps
-    candidates = [] # List of candidates from each iteration, index -1 is the best model. NOT NECESSARY
     iterations_without_improvement = 0
+
+    # Enforce the SAME L∞ bound relative to initial_seed
     range_limit = 255.0 * epsilon
     lower = np.clip(initial_seed - range_limit, 0, 255)
     upper = np.clip(initial_seed + range_limit, 0, 255)
-    current = initial_seed.copy()
-    current_fitness = compute_fitness(current, model, target_label)
-    candidates = [(current, current_fitness)]
+    current_seed = initial_seed.copy()
+    current_fitness = compute_fitness(current_seed, model, target_label)
     for i in range(iterations):
         # Generate ANY number of neighbors using mutate_seed()
-        neighbors = mutate_seed(current, epsilon)
-        # Enforce the SAME L∞ bound relative to initial_seed
+        neighbors = mutate_seed(current_seed, epsilon)
         neighbors = [np.clip(n, lower, upper) for n in neighbors]
+        
         # Add current image to candidates (elitism)
-        neighbors.append(current)
-
+        neighbors.append(current_seed)
         best_iteration_neighbor, best_iteration_fitness = select_best(neighbors, model, target_label)
 
-        if best_iteration_fitness < candidates[-1][1]: 
-            # [-1][1] selects the latest seed and gets it's fitness score
-            candidates.append((best_iteration_neighbor, best_iteration_fitness))
+        # Condition on if adverserial fitness improves
+        if best_iteration_fitness < current_fitness: 
+            current_fitness = best_iteration_fitness
             iterations_without_improvement = 0
 
             # Accept new candidate only if fitness improves
-            current = candidates[-1][0]
-            print(f"Iteration {i} Improvement: {candidates[-1][1]}")
-        elif best_iteration_fitness == candidates[-1][1]:
+            current_seed = best_iteration_neighbor
+            print(f"Iteration {i} Improvement: {current_fitness}")
+        elif best_iteration_fitness == current_fitness:
             # Incremeent early-stopping count
             iterations_without_improvement += 1
 
         # Stop if target class is broken confidently, OR no improvement for multiple steps (optional)
         if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or
-            candidates[-1][1] < -BROKEN_CONFIDENTLY_THRESHOLD):
+            current_fitness < -BROKEN_CONFIDENTLY_THRESHOLD):
             break
-        #print(f"Iteration {i}: best_fitness: {candidates[-1][1]}")
+        # print(f"Iteration {i}: {current_fitness}")
         
     # Returns the "best model" (final_image, final_fitness)
-    return candidates[-1] 
+    return (current_seed, current_fitness)
 
 
 
