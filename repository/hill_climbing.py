@@ -40,16 +40,15 @@ def compute_fitness(
 
     # TODO (student)
     preds = model.predict(np.expand_dims(image_array, axis=0), verbose=0)
-    predictions = []
-    for cl in decode_predictions(preds, top=2)[0]:
-        label, prob = cl[1], cl[2]
-        predictions.append((label, prob))
+    predictions = decode_predictions(preds, top=2)[0]
     assert len(predictions) == 2
-    if predictions[0][0] == target_label and predictions[0][1] > 0.5:
-        #fitness = predictions[0][1] - predictions[1][1] # in-class
-        fitness = predictions[0][1]
+
+    top1_label, top1_prob = predictions[0][1], predictions[0][2]
+    top2_prob = predictions[1][2]
+    if top1_label == target_label:
+        fitness = top1_prob - top2_prob
     else:
-        fitness = -predictions[0][1]
+        fitness = -top1_prob
     return fitness
 
 # ============================================================
@@ -92,19 +91,8 @@ def mutate_seed(
     """
 
     # TODO (student)
-    range_limit = 255 * epsilon
-    N_neighbors = 10 
     mutated_neighbors = []
-    for i in range(N_neighbors):
-        neighbor = seed.copy()
-        # Randomly select 1 pixel
-        x = np.random.randint(0, seed.shape[0])
-        y = np.random.randint(0, seed.shape[1])
-        c = np.random.randint(0, seed.shape[2])
-        # Randomly perturb the pixel within the allowed range
-        perturbation = np.random.uniform(-range_limit, range_limit)
-        neighbor[x, y, c] = np.clip(neighbor[x, y, c] + perturbation, 0, 255)
-        mutated_neighbors.append(neighbor)
+    mutated_neighbors.append(seed)
     return mutated_neighbors
 
 
@@ -173,7 +161,7 @@ def hill_climb(
 
     # TODO (team work)
     BROKEN_CONFIDENTLY_THRESHOLD = 0.75
-    EARLY_STOPPING_CRITERIA = 1000 # Criteria for when no change after n steps
+    EARLY_STOPPING_CRITERIA = 50 # Criteria for when no change after n steps
     iterations_without_improvement = 0
 
     # Enforce the SAME L∞ bound relative to initial_seed
@@ -207,7 +195,7 @@ def hill_climb(
         if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or
             current_fitness < -BROKEN_CONFIDENTLY_THRESHOLD):
             break
-        # print(f"Iteration {i}: {current_fitness}")
+        print(f"Iteration {i}: {current_fitness}")
         
     # Returns the "best model" (final_image, final_fitness)
     return (current_seed, current_fitness)
