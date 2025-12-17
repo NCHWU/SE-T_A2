@@ -11,6 +11,7 @@ DO NOT change function signatures.
 """
 
 import json
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Tuple
@@ -38,9 +39,17 @@ def compute_fitness(
               fitness = -probability(predicted_label)
     """
 
-    # TODO (student)
-    raise NotImplementedError("compute_fitness must be implemented by the student.")
-
+    preds = model.predict(np.expand_dims(image_array, axis=0), verbose=0)
+    predictions = []
+    for cl in decode_predictions(preds, top=2)[0]:
+        label, prob = cl[1], cl[2]
+        predictions.append((label, prob))
+    assert len(predictions) == 2
+    if predictions[0][0] == target_label:
+        fitness = predictions[0][1]
+    else:
+        fitness = -predictions[0][1]
+    return fitness
 
 # ============================================================
 # 2. MUTATION FUNCTION
@@ -81,8 +90,20 @@ def mutate_seed(
         List[np.ndarray]: mutated neighbors
     """
 
-    # TODO (student)
-    raise NotImplementedError("mutate_seed must be implemented by the student.")
+    range_limit = 255 * epsilon
+    N_neighbors = 10 
+    mutated_neighbors = []
+    for i in range(N_neighbors):
+        neighbor = seed.copy()
+        # Randomly select 1 pixel
+        x = np.random.randint(0, seed.shape[0])
+        y = np.random.randint(0, seed.shape[1])
+        c = np.random.randint(0, seed.shape[2])
+        # Randomly perturb the pixel within the allowed range
+        perturbation = np.random.uniform(-range_limit, range_limit)
+        neighbor[x, y, c] = np.clip(neighbor[x, y, c] + perturbation, 0, 255)
+        mutated_neighbors.append(neighbor)
+    return mutated_neighbors
 
 
 
@@ -108,8 +129,14 @@ def select_best(
         (best_image, best_fitness)
     """
 
-    # TODO (student)
-    raise NotImplementedError("select_best must be implemented by the student.")
+    best_fitness = float('inf')
+    best_image = None
+    for image in candidates:
+        fitness_score = compute_fitness(image, model, target_label)
+        if fitness_score < best_fitness:
+            best_fitness = fitness_score
+            best_image = image
+    return (best_image, best_fitness)
 
 
 # ============================================================
@@ -141,9 +168,53 @@ def hill_climb(
     Returns:
         (final_image, final_fitness)
     """
+    current_image = initial_seed.copy()
+    current_fitness = compute_fitness(current_image, model, target_label)
+    range_limit = 255 * epsilon
+    lower_bound = np.clip(initial_seed - range_limit, 0, 255)
+    upper_bound = np.clip(initial_seed + range_limit, 0, 255)
+    no_improve_steps = 0
+    max_no_improve = 20
+    stop_reason = "reached max iterations"
 
-    # TODO (team work)
-    raise NotImplementedError("hill_climb must be implemented by the team.")
+    for i in range(iterations):
+        candidates = mutate_seed(current_image, epsilon)
+        for idx, candidate in enumerate(candidates):
+            np.clip(candidate, lower_bound, upper_bound, out=candidate)
+            candidates[idx] = candidate
+
+        candidates.append(current_image)
+        best_image, best_fitness = select_best(candidates, model, target_label)
+
+        if best_fitness < current_fitness:
+            current_image = best_image
+            current_fitness = best_fitness
+            no_improve_steps = 0
+        else:
+            no_improve_steps += 1
+            if no_improve_steps >= max_no_improve:
+                stop_reason = f"no improvement for {max_no_improve} steps"
+                break
+
+        preds = model.predict(np.expand_dims(current_image, axis=0), verbose=0)
+        top1 = decode_predictions(preds, top=1)[0][0]
+        print(f"iter {i + 1:03d}: model_prediction={top1[1]}  prob={top1[2]:.5f}")
+        if top1[1] != target_label:
+            stop_reason = "prediction is false"
+            break
+
+    preds = model.predict(np.expand_dims(current_image, axis=0), verbose=0)
+    top1 = decode_predictions(preds, top=1)[0][0]
+    print(f"Stop reason: {stop_reason}")
+    print(f"Prediction at stop: {top1[1]}  prob={top1[2]:.5f}")
+    changed_pixels = int(np.count_nonzero(np.any(initial_seed != current_image, axis=2)))
+    print(f"Pixels changed: {changed_pixels}")
+    output_dir = "attack_results"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "hill_climb_result.png")
+    array_to_img(current_image).save(output_path)
+    print(f"Saved adversarial image: {output_path}")
+    return current_image, current_fitness
 
 
 # ============================================================
@@ -167,9 +238,9 @@ if __name__ == "__main__":
     print(f"Target label: {target_label}")
 
     img = load_img(image_path)
-    plt.imshow(img)
-    plt.title("Original image")
-    plt.show()
+    # plt.imshow(img)
+    # plt.title("Original image")
+    # plt.show()
 
     img_array = img_to_array(img)
     seed = img_array.copy()

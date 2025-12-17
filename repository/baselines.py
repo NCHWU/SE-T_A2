@@ -41,7 +41,7 @@ label_to_index = {label: i for i, label in enumerate(imagenet_labels)}
 # ================================================================
 # 3. Model
 # ================================================================
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = 'mps'
 net = vgg16(weights="DEFAULT").to(device)
 net.eval()
 
