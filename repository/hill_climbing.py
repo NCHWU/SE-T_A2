@@ -40,16 +40,15 @@ def compute_fitness(
 
     # TODO (student)
     preds = model.predict(np.expand_dims(image_array, axis=0), verbose=0)
-    predictions = []
-    for cl in decode_predictions(preds, top=2)[0]:
-        label, prob = cl[1], cl[2]
-        predictions.append((label, prob))
+    predictions = decode_predictions(preds, top=2)[0]
     assert len(predictions) == 2
-    if predictions[0][0] == target_label and predictions[0][1] > 0.5:
-        #fitness = predictions[0][1] - predictions[1][1] # in-class
-        fitness = predictions[0][1]
+
+    top1_label, top1_prob = predictions[0][1], predictions[0][2]
+    top2_prob = predictions[1][2]
+    if top1_label == target_label:
+        fitness = top1_prob - top2_prob
     else:
-        fitness = -predictions[0][1]
+        fitness = -top1_prob
     return fitness
 
 # ============================================================
@@ -95,6 +94,8 @@ def mutate_seed(
     mutated_neighbors = []
     mutated_neighbors.append(seed)
     return mutated_neighbors
+
+
 
 # ============================================================
 # 3. SELECT BEST CANDIDATE
@@ -160,27 +161,44 @@ def hill_climb(
 
     # TODO (team work)
     BROKEN_CONFIDENTLY_THRESHOLD = 0.75
-    EARLY_STOPPING_CRITERIA = 1000 # For no improvements for multiple steps
-    candidates = [] # List of candidates from each iteration, index -1 is the best model
-    current = initial_seed
+    EARLY_STOPPING_CRITERIA = 50 # Criteria for when no change after n steps
     iterations_without_improvement = 0
+
+    # Enforce the SAME L∞ bound relative to initial_seed
+    range_limit = 255.0 * epsilon
+    lower = np.clip(initial_seed - range_limit, 0, 255)
+    upper = np.clip(initial_seed + range_limit, 0, 255)
+    current_seed = initial_seed.copy()
+    current_fitness = compute_fitness(current_seed, model, target_label)
     for i in range(iterations):
-        # stop iterating after no changes
-        neighbors = mutate_seed(current, epsilon)
-        # TODO: enforce the same L\infty bound to initial_seed??
+        # Generate ANY number of neighbors using mutate_seed()
+        neighbors = mutate_seed(current_seed, epsilon)
+        neighbors = [np.clip(n, lower, upper) for n in neighbors]
+        
+        # Add current image to candidates (elitism)
+        neighbors.append(current_seed)
         best_iteration_neighbor, best_iteration_fitness = select_best(neighbors, model, target_label)
-        if len(candidates) == 0 or best_iteration_fitness < candidates[-1][1]: # [-1][1] selects the latest seed and gets it's fitness score
-            candidates.append((best_iteration_neighbor, best_iteration_fitness))
+
+        # Condition on if adverserial fitness improves
+        if best_iteration_fitness < current_fitness: 
+            current_fitness = best_iteration_fitness
             iterations_without_improvement = 0
-            print(f"Iteration {i} Improvement: {candidates[-1][1]}")
-        elif best_iteration_fitness == candidates[-1][1]: # For early-stopping, stays the same
+
+            # Accept new candidate only if fitness improves
+            current_seed = best_iteration_neighbor
+            print(f"Iteration {i} Improvement: {current_fitness}")
+        elif best_iteration_fitness == current_fitness:
+            # Incremeent early-stopping count
             iterations_without_improvement += 1
-        current = candidates[-1][0]
-        if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or candidates[-1][1] < -BROKEN_CONFIDENTLY_THRESHOLD):
+
+        # Stop if target class is broken confidently, OR no improvement for multiple steps (optional)
+        if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or
+            current_fitness < -BROKEN_CONFIDENTLY_THRESHOLD):
             break
-        #print(f"Iteration {i}: best_fitness: {candidates[-1][1]}")
-            
-    return candidates[-1] # returns the "best model" (final_image, final_fitness)
+        print(f"Iteration {i}: {current_fitness}")
+        
+    # Returns the "best model" (final_image, final_fitness)
+    return (current_seed, current_fitness)
 
 
 
