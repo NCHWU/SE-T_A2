@@ -91,8 +91,28 @@ def mutate_seed(
     """
 
     # TODO (student)
+    delta = 255.0 * epsilon
+    lower = np.clip(seed - delta, 0, 255)
+    upper = np.clip(seed + delta, 0, 255)
+
+    K = 5
+    h, w, c = seed.shape
+    perturbation_probability = 0.66
+    
     mutated_neighbors = []
-    mutated_neighbors.append(seed)
+    for _ in range(K):
+        neighbor = seed.copy()
+        # randomize image mask [0, 1]
+        # (h, w) for pixel-based perturbation
+        # (h, w, c) for per-channel based perturbatiob
+        mask = np.random.rand(h, w, c) < perturbation_probability
+        
+        # add random noise
+        noise = np.random.uniform(-delta, delta, size=(h, w, c))
+        neighbor[mask] += noise[mask]
+        neighbor = np.clip(neighbor, lower, upper)
+        mutated_neighbors.append(neighbor.copy())
+
     return mutated_neighbors
 
 
@@ -161,7 +181,7 @@ def hill_climb(
 
     # TODO (team work)
     BROKEN_CONFIDENTLY_THRESHOLD = 0.75
-    EARLY_STOPPING_CRITERIA = 50 # Criteria for when no change after n steps
+    EARLY_STOPPING_CRITERIA = 300 # Criteria for when no change after n steps
     iterations_without_improvement = 0
 
     # Enforce the SAME L∞ bound relative to initial_seed
@@ -215,7 +235,7 @@ if __name__ == "__main__":
         image_list = json.load(f)
 
     # Pick first entry
-    item = image_list[0]
+    item = image_list[6]
     image_path = "images/" + item["image"]
     target_label = item["label"]
 
