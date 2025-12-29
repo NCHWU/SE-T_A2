@@ -23,11 +23,8 @@ from keras.utils import array_to_img, load_img, img_to_array
 # 1. FITNESS FUNCTION
 # ============================================================
 
-def compute_fitness(
-    image_array: np.ndarray,
-    model,
-    target_label: str
-) -> float:
+
+def compute_fitness(image_array: np.ndarray, model, target_label: str) -> float:
     """
     Compute fitness of an image for hill climbing.
 
@@ -51,14 +48,13 @@ def compute_fitness(
         fitness = -top1_prob
     return fitness
 
+
 # ============================================================
 # 2. MUTATION FUNCTION
 # ============================================================
 
-def mutate_seed(
-    seed: np.ndarray,
-    epsilon: float
-) -> List[np.ndarray]:
+
+def mutate_seed(seed: np.ndarray, epsilon: float) -> List[np.ndarray]:
     """
     Produce ANY NUMBER of mutated neighbors.
 
@@ -90,21 +86,61 @@ def mutate_seed(
         List[np.ndarray]: mutated neighbors
     """
 
-    # TODO (student)
-    mutated_neighbors = []
-    mutated_neighbors.append(seed)
-    return mutated_neighbors
+    # Constants
+    delta = 255.0 * epsilon
+    K = 20
+    H, W, _ = seed.shape
+    min_frac = 0.10
+    max_frac = 0.30
 
+    # Generate size range for random patch
+    min_h = max(1, int(min_frac * H))
+    max_h = max(1, int(max_frac * H))
+    min_w = max(1, int(min_frac * W))
+    max_w = max(1, int(max_frac * W))
+    max_h = min(max_h, H)
+    max_w = min(max_w, W)
+
+    # Generate mutated neighbors
+    mutated_neighbors = []
+    for _ in range(K):
+        neighbor = seed.copy()
+
+        # Generate random patch size
+        patch_h = np.random.randint(min_h, max_h + 1)
+        patch_w = np.random.randint(min_w, max_w + 1)
+
+        # Generate random patch location
+        i0 = np.random.randint(0, H - patch_h + 1)
+        j0 = np.random.randint(0, W - patch_w + 1)
+
+        # Generate random patch
+        seed_patch = seed[i0 : i0 + patch_h, j0 : j0 + patch_w, :]
+
+        # Generate random patch bounds
+        low_bound = np.maximum(0.0, seed_patch - delta)
+        high_bound = np.minimum(255.0, seed_patch + delta)
+
+        # Generate random patch
+        random_patch = np.random.uniform(low_bound, high_bound, size=seed_patch.shape)
+        neighbor[i0 : i0 + patch_h, j0 : j0 + patch_w, :] = random_patch
+
+        # Clip pixel values to [0, 255] to ensure valid pixel values
+        neighbor = np.clip(neighbor, 0.0, 255.0)
+
+        # Add neighbor to list
+        mutated_neighbors.append(neighbor)
+
+    return mutated_neighbors
 
 
 # ============================================================
 # 3. SELECT BEST CANDIDATE
 # ============================================================
 
+
 def select_best(
-    candidates: List[np.ndarray],
-    model,
-    target_label: str
+    candidates: List[np.ndarray], model, target_label: str
 ) -> Tuple[np.ndarray, float]:
     """
     Evaluate fitness for all candidates and return the one with
@@ -119,7 +155,7 @@ def select_best(
         (best_image, best_fitness)
     """
 
-    best_fitness = float('inf')
+    best_fitness = float("inf")
     best_image = None
     for image in candidates:
         fitness_score = compute_fitness(image, model, target_label)
@@ -133,12 +169,13 @@ def select_best(
 # 4. HILL-CLIMBING ALGORITHM
 # ============================================================
 
+
 def hill_climb(
     initial_seed: np.ndarray,
     model,
     target_label: str,
     epsilon: float = 0.30,
-    iterations: int = 300
+    iterations: int = 300,
 ) -> Tuple[np.ndarray, float]:
     """
     Main hill-climbing loop.
@@ -161,7 +198,7 @@ def hill_climb(
 
     # TODO (team work)
     BROKEN_CONFIDENTLY_THRESHOLD = 0.75
-    EARLY_STOPPING_CRITERIA = 50 # Criteria for when no change after n steps
+    EARLY_STOPPING_CRITERIA = 50  # Criteria for when no change after n steps
     iterations_without_improvement = 0
 
     # Enforce the SAME L∞ bound relative to initial_seed
@@ -174,13 +211,15 @@ def hill_climb(
         # Generate ANY number of neighbors using mutate_seed()
         neighbors = mutate_seed(current_seed, epsilon)
         neighbors = [np.clip(n, lower, upper) for n in neighbors]
-        
+
         # Add current image to candidates (elitism)
         neighbors.append(current_seed)
-        best_iteration_neighbor, best_iteration_fitness = select_best(neighbors, model, target_label)
+        best_iteration_neighbor, best_iteration_fitness = select_best(
+            neighbors, model, target_label
+        )
 
         # Condition on if adverserial fitness improves
-        if best_iteration_fitness < current_fitness: 
+        if best_iteration_fitness < current_fitness:
             current_fitness = best_iteration_fitness
             iterations_without_improvement = 0
 
@@ -192,14 +231,15 @@ def hill_climb(
             iterations_without_improvement += 1
 
         # Stop if target class is broken confidently, OR no improvement for multiple steps (optional)
-        if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or
-            current_fitness < -BROKEN_CONFIDENTLY_THRESHOLD):
+        if (
+            EARLY_STOPPING_CRITERIA == iterations_without_improvement
+            or current_fitness < -BROKEN_CONFIDENTLY_THRESHOLD
+        ):
             break
         print(f"Iteration {i}: {current_fitness}")
-        
+
     # Returns the "best model" (final_image, final_fitness)
     return (current_seed, current_fitness)
-
 
 
 # ============================================================
@@ -242,7 +282,7 @@ if __name__ == "__main__":
         model=model,
         target_label=target_label,
         epsilon=0.30,
-        iterations=300
+        iterations=300,
     )
 
     print("\nFinal fitness:", final_fitness)

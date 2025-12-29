@@ -4,13 +4,15 @@ import numpy as np
 import torch
 from torchvision.utils import save_image
 from torchvision.models import vgg16
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 import torchvision.transforms as transforms
 from PIL import Image
 
 from cleverhans.torch.attacks.fast_gradient_method import fast_gradient_method
-from cleverhans.torch.attacks.projected_gradient_descent import projected_gradient_descent
+from cleverhans.torch.attacks.projected_gradient_descent import (
+    projected_gradient_descent,
+)
+
 
 # -----------------------------
 # Utility: parse Imagenet prediction
@@ -48,16 +50,18 @@ net.eval()
 # ================================================================
 # 4. Image preprocessing transform
 # ================================================================
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-])
+transform = transforms.Compose(
+    [
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ]
+)
 
 
 # ================================================================
 # 5. Attack hyperparameters
 # ================================================================
-EPS = 0.30          # This can be tuned
+EPS = 0.30  # This can be tuned
 PGD_STEPS = 40
 PGD_STEP_SIZE = 0.01
 
@@ -117,9 +121,7 @@ for entry in tqdm(items, desc="Running attacks"):
     # =====================================================
     # PGD Attack
     # =====================================================
-    x_pgd = projected_gradient_descent(
-        net, x, EPS, PGD_STEP_SIZE, PGD_STEPS, np.inf
-    )
+    x_pgd = projected_gradient_descent(net, x, EPS, PGD_STEP_SIZE, PGD_STEPS, np.inf)
 
     out_pgd = net(x_pgd)
     pred_pgd, prob_pgd = parse_prediction(out_pgd, imagenet_labels)
