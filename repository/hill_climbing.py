@@ -57,7 +57,8 @@ def compute_fitness(
 
 def mutate_seed(
     seed: np.ndarray,
-    epsilon: float
+    epsilon: float,
+    step_scale : float
 ) -> List[np.ndarray]:
     """
     Produce ANY NUMBER of mutated neighbors.
@@ -90,28 +91,66 @@ def mutate_seed(
         List[np.ndarray]: mutated neighbors
     """
 
-    # TODO (student)
+    import cv2
     delta = 255.0 * epsilon
     lower = np.clip(seed - delta, 0, 255)
     upper = np.clip(seed + delta, 0, 255)
 
+    step = delta * step_scale
+
     K = 5
     h, w, c = seed.shape
-    perturbation_probability = 0.66
-    
+    perturbation_probability = 0.75
+
+    # Edge Detection -> gaussian "halo mask"
+    gray = cv2.cvtColor(seed.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 40, 120) # 40-120 for smoother edges 
+
+    # gaussian smoothing to create a "circle/halo" effect around edges
+    # different halos for different textures "fine" vs "coarse" 
+    halo1 = cv2.GaussianBlur(edges, (0, 0), sigmaX=2.0, sigmaY=2.0)
+    halo2 = cv2.GaussianBlur(edges, (0, 0), sigmaX=5.0, sigmaY=5.0)
+    edge_halo = np.maximum(halo1, halo2)
+
+    # Normalize the mask to [0, 1] after gaussian blurring
+    edge_halo = edge_halo / (edge_halo.max() + 1e-8)
+
     mutated_neighbors = []
     for _ in range(K):
         neighbor = seed.copy()
-        # randomize image mask [0, 1]
-        # (h, w) for pixel-based perturbation
-        # (h, w, c) for per-channel based perturbatiob
-        mask = np.random.rand(h, w, c) < perturbation_probability
+
+        # Threshold controls how wide/strong the halo extends to
+        # Gaussian outputs 1.0 closer to the edges, and it "dissipates" further away
+        # The mask essentially eliminates the gaussian's further away from the edges, which is how it controls
+        # how strong the mask is
+        # ex: 0.75 means more concentrated perturbations near edges
+        # ex: 0.75 means we spread the halo our further
+        halo_threshold = np.random.uniform(0.01, 0.25)
+        halo_mask_2d = edge_halo > halo_threshold
+        # Expand the channels from 2D -> 3D so we can mask the channels (h,w,c)
+        halo_mask = np.repeat(halo_mask_2d[:, :, None], c, axis=2)
+
+        # creates a low-frequnecy perturbation grid
+        # upsamples it to "smooth" out the details
+        # make changes to those upsampled regions 
+        size_k = np.random.choice([7, 14, 28]) # filter sizes
+        low_frequency_convolution = np.random.randn(size_k, size_k, c)
+        upsampling = cv2.resize(low_frequency_convolution, (w, h), interpolation=cv2.INTER_CUBIC)
+
+        # (h, w, c) for per-channel based perturbations
+        # randomize image mask [0, 1] aka we only make changes to certain parts of the halo
+        randomization_halo_mask = np.random.rand(h, w, c) < perturbation_probability
+        mask = halo_mask & randomization_halo_mask
         
-        # add random noise
-        noise = np.random.uniform(-delta, delta, size=(h, w, c))
-        neighbor[mask] += noise[mask]
-        neighbor = np.clip(neighbor, lower, upper)
-        mutated_neighbors.append(neighbor.copy())
+        # add delta noise in different local directions of upsampled smooth regions
+        # dictated by the allow-able mask
+        lowfreq_noise = step * np.sign(upsampling)
+
+        # basically, how would it change when we add or remove the noise from the pixel?
+        n1 = np.clip(neighbor + mask * lowfreq_noise, lower, upper)
+        n2 = np.clip(neighbor - mask * lowfreq_noise, lower, upper)
+        mutated_neighbors.append(n1)
+        mutated_neighbors.append(n2)
 
     return mutated_neighbors
 
@@ -179,9 +218,8 @@ def hill_climb(
         (final_image, final_fitness)
     """
 
-    # TODO (team work)
-    BROKEN_CONFIDENTLY_THRESHOLD = 0.75
-    EARLY_STOPPING_CRITERIA = 300 # Criteria for when no change after n steps
+    BROKEN_CONFIDENTLY_THRESHOLD = 0.9
+    EARLY_STOPPING_CRITERIA = 9999 # Criteria for when no change after n steps
     iterations_without_improvement = 0
 
     # Enforce the SAME L∞ bound relative to initial_seed
@@ -190,9 +228,20 @@ def hill_climb(
     upper = np.clip(initial_seed + range_limit, 0, 255)
     current_seed = initial_seed.copy()
     current_fitness = compute_fitness(current_seed, model, target_label)
-    for i in range(iterations):
+    for i in range(1, iterations):
+
+        # We set a constraint to how "small" of changes we want to make 
+        # at the beginning and it increases exponentially over iterations
+        # this way we have more emphasis on smaller pixel changes
+        scale_min = 0.1 # minimum allowable of delta perturbations
+        scale_max = 1.0 # maximum allowable of delta perturbations 
+        k = 50          # growth rate
+        frac = i / max(1, iterations - 1) # 0 -> 1
+        growth = (1 - np.exp(-k * frac))
+        step_scale = scale_min + (scale_max - scale_min) * growth
+
         # Generate ANY number of neighbors using mutate_seed()
-        neighbors = mutate_seed(current_seed, epsilon)
+        neighbors = mutate_seed(current_seed, epsilon, step_scale)
         neighbors = [np.clip(n, lower, upper) for n in neighbors]
         
         # Add current image to candidates (elitism)
@@ -206,7 +255,7 @@ def hill_climb(
 
             # Accept new candidate only if fitness improves
             current_seed = best_iteration_neighbor
-            print(f"Iteration {i} Improvement: {current_fitness}")
+            # print(f"Iteration {i} Improvement: {current_fitness}")
         elif best_iteration_fitness == current_fitness:
             # Incremeent early-stopping count
             iterations_without_improvement += 1
@@ -215,7 +264,7 @@ def hill_climb(
         if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or
             current_fitness < -BROKEN_CONFIDENTLY_THRESHOLD):
             break
-        print(f"Iteration {i}: {current_fitness}")
+        print(f"Iteration {i} w/ step: {step_scale}: {current_fitness}")
         
     # Returns the "best model" (final_image, final_fitness)
     return (current_seed, current_fitness)
@@ -235,6 +284,7 @@ if __name__ == "__main__":
         image_list = json.load(f)
 
     # Pick first entry
+    # hard: 2 (cup), 5 (bubble), 6 (goblet), 9 (viaduct)
     item = image_list[6]
     image_path = "images/" + item["image"]
     target_label = item["label"]
@@ -261,8 +311,8 @@ if __name__ == "__main__":
         initial_seed=seed,
         model=model,
         target_label=target_label,
-        epsilon=0.30,
-        iterations=300
+        epsilon=0.15,
+        iterations=3000
     )
 
     print("\nFinal fitness:", final_fitness)
