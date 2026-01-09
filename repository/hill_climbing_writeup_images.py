@@ -17,6 +17,7 @@ from typing import List, Tuple
 from keras.applications import vgg16
 from keras.applications.imagenet_utils import decode_predictions
 from keras.utils import array_to_img, load_img, img_to_array
+import os 
 
 
 # ============================================================
@@ -58,7 +59,10 @@ def compute_fitness(
 def mutate_seed(
     seed: np.ndarray,
     epsilon: float,
-    step_scale : float
+    step_scale : float,
+    run_id : str,
+    image_name : str,
+    iteration : int
 ) -> List[np.ndarray]:
     """
     Produce ANY NUMBER of mutated neighbors.
@@ -92,6 +96,10 @@ def mutate_seed(
     """
 
     import cv2
+    import os, time
+    base_dir = f"output/{image_name}/{run_id}/iteration={iteration}-step_scale={step_scale}"
+    os.makedirs(base_dir, exist_ok=True)
+
     delta = 255.0 * epsilon
     lower = np.clip(seed - delta, 0, 255)
     upper = np.clip(seed + delta, 0, 255)
@@ -116,7 +124,9 @@ def mutate_seed(
     edge_halo = edge_halo / (edge_halo.max() + 1e-8)
 
     mutated_neighbors = []
-    for _ in range(K):
+    for k in range(K):
+        iter_dir = f"{base_dir}/{image_name}_neighbor_k={k}"
+        os.makedirs(iter_dir, exist_ok=True)
         neighbor = seed.copy()
 
         # Threshold controls how wide/strong the halo extends to
@@ -140,18 +150,30 @@ def mutate_seed(
         # (h, w, c) for per-channel based perturbations
         # randomize image mask [0, 1] aka we only make changes to certain parts of the halo
         randomization_halo_mask = np.random.rand(h, w, c) < perturbation_probability
-        mask = halo_mask & randomization_halo_mask
+        halo_mask = halo_mask & randomization_halo_mask
         
         # add delta noise in different local directions of upsampled smooth regions
         # dictated by the allow-able mask
         lowfreq_noise = step * np.sign(upsampling)
+        combined = halo_mask * lowfreq_noise
 
         # basically, how would it change when we add or remove the noise from the pixel?
-        n1 = np.clip(neighbor + mask * lowfreq_noise, lower, upper)
-        n2 = np.clip(neighbor - mask * lowfreq_noise, lower, upper)
+        n1 = np.clip(neighbor + combined, lower, upper)
+        n2 = np.clip(neighbor - combined, lower, upper)
         mutated_neighbors.append(n1)
         mutated_neighbors.append(n2)
+        cv2.imwrite(f"{iter_dir}/{image_name}_clean.png", cv2.cvtColor(seed.astype(np.uint8), cv2.COLOR_RGB2BGR))
+        cv2.imwrite(f"{iter_dir}/{image_name}_1_edges.png", edges)
+        cv2.imwrite(f"{iter_dir}/{image_name}_2_edge_halo.png", (edge_halo * 255).astype(np.uint8))
+        cv2.imwrite(f"{iter_dir}/{image_name}_3_halo_mask_2d.png", (halo_mask_2d.astype(np.uint8) * 255))
+        cv2.imwrite(f"{iter_dir}/{image_name}_4_final_halo_mask.png", (halo_mask[:, :, 0].astype(np.uint8) * 255))
+        cv2.imwrite(f"{iter_dir}/{image_name}_5_upsampling.png", (((upsampling - upsampling.min()) / (upsampling.max() - upsampling.min() + 1e-8))[:, :, 0] * 255).astype(np.uint8))
+        cv2.imwrite(f"{iter_dir}/{image_name}_6_lowfreq_noise.png", (((lowfreq_noise - lowfreq_noise.min()) / (lowfreq_noise.max() - lowfreq_noise.min() + 1e-8))[:, :, 0] * 255).astype(np.uint8))
+        cv2.imwrite(f"{iter_dir}/{image_name}_7_combined_halo_lowfreq.png", (((halo_mask * lowfreq_noise - (halo_mask * lowfreq_noise).min()) / ((halo_mask * lowfreq_noise).max() - (halo_mask * lowfreq_noise).min() + 1e-8))[:, :, 0] * 255).astype(np.uint8))
+        cv2.imwrite(f"{iter_dir}/{image_name}_n1.png", cv2.cvtColor(n1.astype(np.uint8), cv2.COLOR_RGB2BGR))
+        cv2.imwrite(f"{iter_dir}/{image_name}_n2.png", cv2.cvtColor(n2.astype(np.uint8), cv2.COLOR_RGB2BGR))
 
+        # cv2.imwrite(f"{iter_dir}/1_{k}_random_mask.png", (randomization_halo_mask[:, :, 0].astype(np.uint8) * 255))
     return mutated_neighbors
 
 
@@ -219,7 +241,7 @@ def hill_climb(
     """
 
     BROKEN_CONFIDENTLY_THRESHOLD = 0.9
-    EARLY_STOPPING_CRITERIA = 9999 # Criteria for when no change after n steps
+    EARLY_STOPPING_CRITERIA = 300 # Criteria for when no change after n steps
     iterations_without_improvement = 0
 
     # Enforce the SAME L∞ bound relative to initial_seed
@@ -228,20 +250,22 @@ def hill_climb(
     upper = np.clip(initial_seed + range_limit, 0, 255)
     current_seed = initial_seed.copy()
     current_fitness = compute_fitness(current_seed, model, target_label)
+    import time
+    run_id = time.strftime("%H:%M:%S")
     for i in range(1, iterations):
 
         # We set a constraint to how "small" of changes we want to make 
         # at the beginning and it increases exponentially over iterations
         # this way we have more emphasis on smaller pixel changes
-        scale_min = 0.1 # minimum allowable of delta perturbations
+        scale_min = 0.01 # minimum allowable of delta perturbations
         scale_max = 1.0 # maximum allowable of delta perturbations 
-        k = 50          # growth rate
+        k = 5          # growth rate
         frac = i / max(1, iterations - 1) # 0 -> 1
         growth = (1 - np.exp(-k * frac))
         step_scale = scale_min + (scale_max - scale_min) * growth
 
         # Generate ANY number of neighbors using mutate_seed()
-        neighbors = mutate_seed(current_seed, epsilon, step_scale)
+        neighbors = mutate_seed(current_seed, epsilon, step_scale, image_name=target_label, run_id=run_id, iteration=i)
         neighbors = [np.clip(n, lower, upper) for n in neighbors]
         
         # Add current image to candidates (elitism)
@@ -276,7 +300,6 @@ def hill_climb(
 # ============================================================
 
 if __name__ == "__main__":
-    # Load classifier
     model = vgg16.VGG16(weights="imagenet")
 
     # Load JSON describing dataset
@@ -285,44 +308,51 @@ if __name__ == "__main__":
 
     # Pick first entry
     # hard: 2 (cup), 5 (bubble), 6 (goblet), 9 (viaduct)
-    item = image_list[0]
-    image_path = "images/" + item["image"]
-    target_label = item["label"]
+    import time
+    run_id = time.strftime("%H:%M:%S")
+    for i in range(0, 10):
+        item = image_list[i]
+        image_path = "images/" + item["image"]
+        target_label = item["label"]
 
-    print(f"Loaded image: {image_path}")
-    print(f"Target label: {target_label}")
+        print(f"Loaded image: {image_path}")
+        print(f"Target label: {target_label}")
 
-    img = load_img(image_path)
-    # plt.imshow(img)
-    # plt.title("Original image")
-    # plt.show()
+        img = load_img(image_path)
+        # plt.imshow(img)
+        # plt.title("Original image")
+        # plt.show()
 
-    img_array = img_to_array(img)
-    seed = img_array.copy()
+        img_array = img_to_array(img)
+        seed = img_array.copy()
 
-    # Print baseline top-5 predictions
-    print("\nBaseline predictions (top-5):")
-    preds = model.predict(np.expand_dims(seed, axis=0))
-    for cl in decode_predictions(preds, top=5)[0]:
-        print(f"{cl[1]:20s}  prob={cl[2]:.5f}")
+        # Print baseline top-5 predictions
+        print("\nBaseline predictions (top-5):")
+        preds = model.predict(np.expand_dims(seed, axis=0))
+        for cl in decode_predictions(preds, top=5)[0]:
+            print(f"{cl[1]:20s}  prob={cl[2]:.5f}")
 
-    # Run hill climbing attack
-    final_img, final_fitness = hill_climb(
-        initial_seed=seed,
-        model=model,
-        target_label=target_label,
-        epsilon=0.15,
-        iterations=3000
-    )
+        # Run hill climbing attack
+        final_img, final_fitness = hill_climb(
+            initial_seed=seed,
+            model=model,
+            target_label=target_label,
+            epsilon=0.15,
+            iterations=300
+        )
 
-    print("\nFinal fitness:", final_fitness)
+        print(f"\nFinal fitness for {image_path}:", final_fitness)
+        out_dir = f"final_output/{run_id}/"
+        os.makedirs(out_dir, exist_ok=True)
 
-    plt.imshow(array_to_img(final_img))
-    plt.title(f"Adversarial Result — fitness={final_fitness:.4f}")
-    plt.show()
+        out_path = os.path.join(out_dir, os.path.basename(image_path))
+        plt.imsave(out_path, final_img.astype(np.uint8))
+        # plt.imshow(array_to_img(final_img))
+        # plt.title(f"Adversarial Result — fitness={final_fitness:.4f}")
+        # plt.show()
 
-    # Print final predictions
-    final_preds = model.predict(np.expand_dims(final_img, axis=0))
-    print("\nFinal predictions:")
-    for cl in decode_predictions(final_preds, top=5)[0]:
-        print(cl)
+        # Print final predictions
+        final_preds = model.predict(np.expand_dims(final_img, axis=0))
+        print("\nFinal predictions:")
+        for cl in decode_predictions(final_preds, top=5)[0]:
+            print(cl)
