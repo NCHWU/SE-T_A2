@@ -11,5 +11,5 @@ Run app
 
 ```zsh
 cd repository
-uv run baseline.py
+uv run baselines.py
 ```

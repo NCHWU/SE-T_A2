@@ -1,5 +1,7 @@
 import json
 import os
+import csv
+import time
 import numpy as np
 import torch
 from torchvision.utils import save_image
@@ -57,7 +59,7 @@ transform = transforms.Compose([
 # ================================================================
 # 5. Attack hyperparameters
 # ================================================================
-EPS = 0.30          # This can be tuned
+EPSILONS = [0.15, 0.30, 0.40, 0.50]
 PGD_STEPS = 40
 PGD_STEP_SIZE = 0.01
 
@@ -66,6 +68,17 @@ PGD_STEP_SIZE = 0.01
 # ================================================================
 OUTDIR = "attack_results"
 os.makedirs(OUTDIR, exist_ok=True)
+
+# Prepare CSV output containers
+rows = []
+headers = [
+    "Image",
+    *[f"FGM_{eps:.2f}" for eps in EPSILONS],
+    *[f"PGD_{eps:.2f}" for eps in EPSILONS],
+    "CleanCorrect",
+    "FGM_FinalCorrect",
+    "PGD_FinalCorrect",
+]
 
 # ================================================================
 # 7. Run attacks for every image from the JSON file
@@ -104,37 +117,55 @@ for entry in tqdm(items, desc="Running attacks"):
     print(f"Model prediction (clean): {pred_clean} ({prob_clean:.3f})")
 
     # =====================================================
-    # FGM Attack
+    # FGM runtimes across epsilons
     # =====================================================
-    x_fgm = fast_gradient_method(net, x, EPS, np.inf)
-    out_fgm = net(x_fgm)
-    pred_fgm, prob_fgm = parse_prediction(out_fgm, imagenet_labels)
-
-    save_image(x_fgm, os.path.join(OUTDIR, f"{image_file}_fgm.png"))
-
-    print(f"FGM prediction: {pred_fgm} ({prob_fgm:.3f})")
+    fgm_times = []
+    for eps in EPSILONS:
+        t0 = time.perf_counter()
+        _ = fast_gradient_method(net, x, eps, np.inf)
+        fgm_times.append(time.perf_counter() - t0)
 
     # =====================================================
-    # PGD Attack
+    # PGD runtimes across epsilons
     # =====================================================
-    x_pgd = projected_gradient_descent(
-        net, x, EPS, PGD_STEP_SIZE, PGD_STEPS, np.inf
-    )
+    pgd_times = []
+    for eps in EPSILONS:
+        t0 = time.perf_counter()
+        _ = projected_gradient_descent(net, x, eps, PGD_STEP_SIZE, PGD_STEPS, np.inf)
+        pgd_times.append(time.perf_counter() - t0)
 
-    out_pgd = net(x_pgd)
-    pred_pgd, prob_pgd = parse_prediction(out_pgd, imagenet_labels)
+    # Correctness flags
+    clean_correct = (pred_clean == human_label)
+    max_eps = max(EPSILONS)
+    x_fgm_end = fast_gradient_method(net, x, max_eps, np.inf)
+    pred_fgm_end, _ = parse_prediction(net(x_fgm_end), imagenet_labels)
+    fgm_final_correct = (pred_fgm_end == human_label)
 
-    save_image(x_pgd, os.path.join(OUTDIR, f"{image_file}_pgd.png"))
+    x_pgd_end = projected_gradient_descent(net, x, max_eps, PGD_STEP_SIZE, PGD_STEPS, np.inf)
+    pred_pgd_end, _ = parse_prediction(net(x_pgd_end), imagenet_labels)
+    pgd_final_correct = (pred_pgd_end == human_label)
 
-    print(f"PGD prediction: {pred_pgd} ({prob_pgd:.3f})")
+    # Add row to CSV data
+    rows.append({
+        "Image": os.path.splitext(image_file)[0],
+        **{f"FGM_{eps:.2f}": t for eps, t in zip(EPSILONS, fgm_times)},
+        **{f"PGD_{eps:.2f}": t for eps, t in zip(EPSILONS, pgd_times)},
+        "CleanCorrect": clean_correct,
+        "FGM_FinalCorrect": fgm_final_correct,
+        "PGD_FinalCorrect": pgd_final_correct,
+    })
 
-    # =====================================================
-    # Summary for this image
-    # =====================================================
-    if true_idx is not None:
-        print("\nCorrect label index:", true_idx)
-        print("Clean correct?", imagenet_labels.index(pred_clean) == true_idx)
-        print("FGM correct?", imagenet_labels.index(pred_fgm) == true_idx)
-        print("PGD correct?", imagenet_labels.index(pred_pgd) == true_idx)
-
+    print("FGM times:", ", ".join(f"{t:.4f}s" for t in fgm_times))
+    print("PGD times:", ", ".join(f"{t:.4f}s" for t in pgd_times))
+    print(f"Clean correct: {clean_correct} | FGM end correct: {fgm_final_correct} | PGD end correct: {pgd_final_correct}")
     print("------------------------------------------------------")
+
+# Write CSV once after processing all images
+csv_path = os.path.join(OUTDIR, "fgm_pgd_runtimes.csv")
+with open(csv_path, "w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=headers)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+
+print(f"Saved runtimes to {csv_path}")
