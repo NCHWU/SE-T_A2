@@ -23,11 +23,8 @@ from keras.utils import array_to_img, load_img, img_to_array
 # 1. FITNESS FUNCTION
 # ============================================================
 
-def compute_fitness(
-    image_array: np.ndarray,
-    model,
-    target_label: str
-) -> float:
+
+def compute_fitness(image_array: np.ndarray, model, target_label: str) -> float:
     """
     Compute fitness of an image for hill climbing.
 
@@ -51,14 +48,14 @@ def compute_fitness(
         fitness = -top1_prob
     return fitness
 
+
 # ============================================================
 # 2. MUTATION FUNCTION
 # ============================================================
 
+
 def mutate_seed(
-    seed: np.ndarray,
-    epsilon: float,
-    step_scale : float
+    seed: np.ndarray, epsilon: float, step_scale: float
 ) -> List[np.ndarray]:
     """
     Produce ANY NUMBER of mutated neighbors.
@@ -92,6 +89,7 @@ def mutate_seed(
     """
 
     import cv2
+
     delta = 255.0 * epsilon
     lower = np.clip(seed - delta, 0, 255)
     upper = np.clip(seed + delta, 0, 255)
@@ -104,10 +102,10 @@ def mutate_seed(
 
     # Edge Detection -> gaussian "halo mask"
     gray = cv2.cvtColor(seed.astype(np.uint8), cv2.COLOR_RGB2GRAY)
-    edges = cv2.Canny(gray, 40, 120) # 40-120 for smoother edges 
+    edges = cv2.Canny(gray, 40, 120)  # 40-120 for smoother edges
 
     # gaussian smoothing to create a "circle/halo" effect around edges
-    # different halos for different textures "fine" vs "coarse" 
+    # different halos for different textures "fine" vs "coarse"
     halo1 = cv2.GaussianBlur(edges, (0, 0), sigmaX=2.0, sigmaY=2.0)
     halo2 = cv2.GaussianBlur(edges, (0, 0), sigmaX=5.0, sigmaY=5.0)
     edge_halo = np.maximum(halo1, halo2)
@@ -132,16 +130,18 @@ def mutate_seed(
 
         # creates a low-frequnecy perturbation grid
         # upsamples it to "smooth" out the details
-        # make changes to those upsampled regions 
-        size_k = np.random.choice([7, 14, 28]) # filter sizes
+        # make changes to those upsampled regions
+        size_k = np.random.choice([7, 14, 28])  # filter sizes
         low_frequency_convolution = np.random.randn(size_k, size_k, c)
-        upsampling = cv2.resize(low_frequency_convolution, (w, h), interpolation=cv2.INTER_CUBIC)
+        upsampling = cv2.resize(
+            low_frequency_convolution, (w, h), interpolation=cv2.INTER_CUBIC
+        )
 
         # (h, w, c) for per-channel based perturbations
         # randomize image mask [0, 1] aka we only make changes to certain parts of the halo
         randomization_halo_mask = np.random.rand(h, w, c) < perturbation_probability
         mask = halo_mask & randomization_halo_mask
-        
+
         # add delta noise in different local directions of upsampled smooth regions
         # dictated by the allow-able mask
         lowfreq_noise = step * np.sign(upsampling)
@@ -155,15 +155,13 @@ def mutate_seed(
     return mutated_neighbors
 
 
-
 # ============================================================
 # 3. SELECT BEST CANDIDATE
 # ============================================================
 
+
 def select_best(
-    candidates: List[np.ndarray],
-    model,
-    target_label: str
+    candidates: List[np.ndarray], model, target_label: str
 ) -> Tuple[np.ndarray, float]:
     """
     Evaluate fitness for all candidates and return the one with
@@ -178,13 +176,32 @@ def select_best(
         (best_image, best_fitness)
     """
 
-    best_fitness = float('inf')
+    if len(candidates) == 0:
+        raise ValueError("candidates list is empty")
+
+    # Batch all candidates for efficient GPU evaluation
+    batch = np.array(candidates)  # Shape: (num_candidates, H, W, C)
+
+    # Single batch prediction instead of one-by-one
+    batch_preds = model.predict(batch, verbose=0, batch_size=len(batch))
+    batch_predictions = decode_predictions(batch_preds, top=2)
+
+    # Compute fitness for each candidate
+    best_fitness = float("inf")
     best_image = None
-    for image in candidates:
-        fitness_score = compute_fitness(image, model, target_label)
+    for idx, predictions in enumerate(batch_predictions):
+        assert len(predictions) == 2
+        top1_label, top1_prob = predictions[0][1], predictions[0][2]
+        top2_prob = predictions[1][2]
+        if top1_label == target_label:
+            fitness_score = top1_prob - top2_prob
+        else:
+            fitness_score = -top1_prob
+
         if fitness_score < best_fitness:
             best_fitness = fitness_score
-            best_image = image
+            best_image = candidates[idx]
+
     return (best_image, best_fitness)
 
 
@@ -192,12 +209,13 @@ def select_best(
 # 4. HILL-CLIMBING ALGORITHM
 # ============================================================
 
+
 def hill_climb(
     initial_seed: np.ndarray,
     model,
     target_label: str,
     epsilon: float = 0.30,
-    iterations: int = 300
+    iterations: int = 300,
 ) -> Tuple[np.ndarray, float]:
     """
     Main hill-climbing loop.
@@ -219,7 +237,7 @@ def hill_climb(
     """
 
     BROKEN_CONFIDENTLY_THRESHOLD = 0.9
-    EARLY_STOPPING_CRITERIA = 9999 # Criteria for when no change after n steps
+    EARLY_STOPPING_CRITERIA = 9999  # Criteria for when no change after n steps
     iterations_without_improvement = 0
 
     # Enforce the SAME L∞ bound relative to initial_seed
@@ -229,27 +247,28 @@ def hill_climb(
     current_seed = initial_seed.copy()
     current_fitness = compute_fitness(current_seed, model, target_label)
     for i in range(1, iterations):
-
-        # We set a constraint to how "small" of changes we want to make 
+        # We set a constraint to how "small" of changes we want to make
         # at the beginning and it increases exponentially over iterations
         # this way we have more emphasis on smaller pixel changes
-        scale_min = 0.1 # minimum allowable of delta perturbations
-        scale_max = 1.0 # maximum allowable of delta perturbations 
-        k = 50          # growth rate
-        frac = i / max(1, iterations - 1) # 0 -> 1
-        growth = (1 - np.exp(-k * frac))
+        scale_min = 0.1  # minimum allowable of delta perturbations
+        scale_max = 1.0  # maximum allowable of delta perturbations
+        k = 50  # growth rate
+        frac = i / max(1, iterations - 1)  # 0 -> 1
+        growth = 1 - np.exp(-k * frac)
         step_scale = scale_min + (scale_max - scale_min) * growth
 
         # Generate ANY number of neighbors using mutate_seed()
         neighbors = mutate_seed(current_seed, epsilon, step_scale)
         neighbors = [np.clip(n, lower, upper) for n in neighbors]
-        
+
         # Add current image to candidates (elitism)
         neighbors.append(current_seed)
-        best_iteration_neighbor, best_iteration_fitness = select_best(neighbors, model, target_label)
+        best_iteration_neighbor, best_iteration_fitness = select_best(
+            neighbors, model, target_label
+        )
 
         # Condition on if adverserial fitness improves
-        if best_iteration_fitness < current_fitness: 
+        if best_iteration_fitness < current_fitness:
             current_fitness = best_iteration_fitness
             iterations_without_improvement = 0
 
@@ -261,14 +280,15 @@ def hill_climb(
             iterations_without_improvement += 1
 
         # Stop if target class is broken confidently, OR no improvement for multiple steps (optional)
-        if (EARLY_STOPPING_CRITERIA == iterations_without_improvement or
-            current_fitness < -BROKEN_CONFIDENTLY_THRESHOLD):
+        if (
+            EARLY_STOPPING_CRITERIA == iterations_without_improvement
+            or current_fitness < -BROKEN_CONFIDENTLY_THRESHOLD
+        ):
             break
         print(f"Iteration {i} w/ step: {step_scale}: {current_fitness}")
-        
+
     # Returns the "best model" (final_image, final_fitness)
     return (current_seed, current_fitness)
-
 
 
 # ============================================================
@@ -312,7 +332,7 @@ if __name__ == "__main__":
         model=model,
         target_label=target_label,
         epsilon=0.15,
-        iterations=3000
+        iterations=3000,
     )
 
     print("\nFinal fitness:", final_fitness)

@@ -2,6 +2,9 @@ venv/
 venv310/
 attack_results/
 
+.direnv
+.envrc
+
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,macos,windows,linux,pycharm+all,python,venv
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,macos,windows,linux,pycharm+all,python,venv
 
